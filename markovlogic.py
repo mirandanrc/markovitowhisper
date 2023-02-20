@@ -4,81 +4,111 @@ from std_msgs.msg import String
 import sounddevice as sd
 from scipy.io.wavfile import write
 
-# def check_start(msg):
-#    print("data en check start",msg)
-#    if(msg.data=="start"):        
-#        return 1
-#    else:
-#        return 0
+global RECORDWAKEUPCALL
+global RECORDCOMMAND
+global INVALIDWAKEUPCALL
+global COMMANDINTERPRETED
+global EXITCALLDETECTED
+RECORDWAKEUPCALL = False
+RECORDCOMMAND = False
+INVALIDWAKEUPCALL = False
+COMMANDINTERPRETED = False
+EXITCALLDETECTED = False
 
 #callback process
 def markovcallback(msg):
-    # comprobar = check_start(msg)
-    # print("comprobar value return ",comprobar)
-    # if(comprobar == 1):
+    global RECORDWAKEUPCALL
+    global RECORDCOMMAND
+    global INVALIDWAKEUPCALL
+    global COMMANDINTERPRETED
+    global EXITCALLDETECTED
 
-    if(msg.data == "spike"):
-        # AQUI EMPIEZA EL CODIGO (Grabación WakeupCall)
-        # recording wakeupcall
-        secondswakeupcall = 2  # Duration of recording
-        rospy.loginfo("Wakeup call:")  # Te avisa que empezó a grabar
-        wakeupcallrecording = sd.rec(int(secondswakeupcall * fs), samplerate=fs, channels=2)  # Aquí graba
-        sd.wait()  # Wait until recording is finished
-        write('audio/Markovito.wav', fs, wakeupcallrecording)  # Save as WAV file (Guarda la grabación)
-        flag_wakeupcall = True  # Variable para indicar que terminó de grabar
-        rospy.loginfo("Wakeup call recorded")  # Te avisa que terminó de grabar
-        # flag wakeup call
-        if (flag_wakeupcall == True):  # Si ya terminó de grabar ...
-            flagsmarkov = String()
-            flagsmarkov.data = "wakeupcall recorded"
-            wakeupcallpub.publish(flagsmarkov)  # Manda bandera de que ya terminó de grabar y ya creó el archivo ----- PASAR A WHISPER
-
-    #Segunda parte 
-    if(msg.data == "wakeupcall correct" or msg.data == "keep recording"): #Si recibe una bandera de que sí dijeron Markovito // A partir de aqui es donde se repite si no encontró palabra de salida
-        #recording command
-        secondscommand = 5  # Duration of recording
-        rospy.loginfo("Record your command:") #Te avisa que empieza a grabar la instrucción
-        commandrecording = sd.rec(int(secondscommand * fs), samplerate=fs, channels=2) #Graba la instruccion
-        sd.wait()  # Wait until recording is finished
-        write('audio/Command.wav', fs, commandrecording)  # Save as WAV file  (guarda la instrucción)
-        flag_command = True #Variable para indicar que terminó de grabar
-        rospy.loginfo("Command recorded") #Te avisa que terminó de grabar la instrucción
-        #flag command
-        if (flag_command == True): #Si terminó de grabar...
-            flagsmarkov = String()
-            flagsmarkov.data = "command is ready" 
-            commandpub.publish(flagsmarkov) #Manda una bandera de que terminó de grabar --- PASAR A WHISPER
-
-    #AQUI RECIBE LAS DIFERENTES BANDERAS DEPENDIENDO DE LO QUE ENCONTRÓ WHISPER
-    if(msg.data == "invalid wakeupcall"): #Si la wakeupcall no fue Markovito
-        rospy.loginfo("Invalid wakeup call")
-
-    if(msg.data == "command interpreted"): #La bandera de que ya terminó de transcribir la instrucción
-        rospy.loginfo("Command: ")
-
-    if(msg.data == "exit call detected"): #La bandera de que encontró la palabra de salida
-        rospy.loginfo("Exit call detected")
+    if(msg.data == "start" or msg.data=="spike"):
+        RECORDWAKEUPCALL = True
+        flagsamplitude.publish("silence")
+        print("threshold detected")
+    if(msg.data == "wakeupcall correct" or msg.data == "keep recording"):
+        RECORDCOMMAND = True
+        print("valid wakeup call")
+    if(msg.data == "invalid wakeupcall"):
+        INVALIDWAKEUPCALL = True
+        print("invalid wakeup call")
+    if(msg.data == "command interpreted"): 
+        COMMANDINTERPRETED = True
+        print("Command: ")  
+    if(msg.data == "exit call detected"): 
+        EXITCALLDETECTED = True
+        print("exit call detected")
+    
 
 #callback transcript
-def transcriptcallback(msg): #Aquí llega la transcripción del comando
+def transcriptcallback(msg):
     rospy.loginfo(msg)
+
+    
+def wakeupcall():
+    global RECORDWAKEUPCALL
+    global RECORDCOMMAND
+    global COMMANDINTERPRETED
+    global INVALIDWAKEUPCALL
+    global EXITCALLDETECTED
+
+    while True:
+        if(RECORDWAKEUPCALL == True):
+            # recording wakeupcall
+            seconds = 2
+            print("Record your wakeup call:")
+            wakeupcallrecording = sd.rec(int(seconds * fs), samplerate=fs, channels=2)
+            sd.wait()  
+            write('audio/Markovito.wav', fs, wakeupcallrecording)
+            print("Wakeup call recorded")
+            flagsmarkov = String()
+            flagsmarkov.data = "wakeupcall recorded"
+            flagswhisper.publish(flagsmarkov) 
+            RECORDWAKEUPCALL = False 
+
+        if(RECORDCOMMAND == True):
+            #recording command
+            seconds = 5 
+            print("Record your command:") 
+            commandrecording = sd.rec(int(seconds * fs), samplerate=fs, channels=2) 
+            sd.wait()
+            write('audio/Command.wav', fs, commandrecording)  
+            print("Command recorded")
+            flagsmarkov = String()
+            flagsmarkov.data = "command is ready" 
+            flagswhisper.publish(flagsmarkov)
+            RECORDCOMMAND = False 
+            
+        if(COMMANDINTERPRETED == True):
+            rospy.loginfo("Command: ")
+            COMMANDINTERPRETED = False
+
+        if(INVALIDWAKEUPCALL == True):
+            print("Invalid wakeup call")
+            INVALIDWAKEUPCALL = False
+
+        if(EXITCALLDETECTED == True): 
+            print("Exit call detected")
+            EXITCALLDETECTED = False
 
 #main
 if __name__ == '__main__':
     rospy.init_node('markovlogic')  
     rate= rospy.Rate(60)
-    fs = 44100  # Recording sample rate
+    fs = 44100 
 
     #subscriber
-    #initsub = rospy.Subscriber("/flaginit", String, initcallback)
     markovsub = rospy.Subscriber("/flags", String, markovcallback)
-    #markovsub2 = rospy.Subscriber("/flags", String, check_start)
     transcriptsub = rospy.Subscriber("/whisperradio", String, transcriptcallback)
 
     #publisher
-    wakeupcallpub = rospy.Publisher("/flags", String, queue_size=50)
-    commandpub = rospy.Publisher("/flags", String, queue_size=50)
-    #startpub = rospy.Publisher("/flaginit", String, queue_size=50)
+    flagswhisper = rospy.Publisher("/flags", String, queue_size=50)
+    flagsamplitude = rospy.Publisher("/flags", String, queue_size=50)
+    
+    flagsamplitude.publish("start")
+    
+    wakeupcall()
 
     rospy.spin()
 
